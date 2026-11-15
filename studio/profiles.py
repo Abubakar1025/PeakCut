@@ -191,7 +191,8 @@ def _ydl_info(url: str) -> dict:
     import yt_dlp
     from .live import _Quiet
     with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True,
-                           "logger": _Quiet(), "socket_timeout": 10}) as y:
+                           "logger": _Quiet(), "socket_timeout": 10,
+                           "extractor_args": {"youtube": {"player_client": ["android", "web"]}}}) as y:
         return y.extract_info(url, download=False) or {}
 
 

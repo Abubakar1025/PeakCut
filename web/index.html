@@ -1833,7 +1833,7 @@ function drawCreatorForm() {
         <label class="f">Check the live stream every<select data-k="ai_every_min">${opts({1:"1 minute", 2:"2 minutes", 3:"3 minutes", 5:"5 minutes", 10:"10 minutes"}, c.ai_every_min || 3)}</select><small class="sub" id="costhint" style="font-weight:400">${costHint(c.ai_every_min)}</small></label>
         <p class="help span" style="margin:0">On top of that, the AI always looks straight away when the stream suddenly gets louder or chat gets busier, and when someone says "clip" or "clip it".</p>
         <label class="f">Most live clips per hour<input data-k="live_per_hour" type="number" min="1" max="60" value="${c.live_per_hour}"></label>
-        <label class="f">Make a clip when<select data-k="decide_mode">${opts({both:"Both judges say yes", either:"Both say yes, or the words judge is very sure (90+)"}, c.decide_mode)}</select></label>
+        <label class="f">Make a clip when<select data-k="decide_mode">${opts({either:"Either judge says yes (Recommended)", words:"Words judge only (AI transcript)", both:"Both judges say yes (Words + Audio reaction)"}, c.decide_mode)}</select></label>
         <label class="f">Words judge must score at least<input data-k="min_score" type="number" min="0" max="100" value="${c.min_score}"></label>
         <label class="f">Make sure there's a live clip at least every<select data-k="must_clip_min">${opts({0:"Off", 15:"15 minutes", 30:"30 minutes", 60:"1 hour", 120:"2 hours"}, c.must_clip_min)}</select></label>
         <label class="f">Minimum gap between live clips (minutes)<input data-k="min_gap_min" type="number" min="0" max="60" value="${c.min_gap_min}"></label>
@@ -1988,8 +1988,10 @@ const setTabs = () => [
 function aiHints() {
   const k = S.ai, sel = $("#ai_provider"); if (!k || !sel) return;
   const pv = k.providers.find(x => x.id === sel.value) || k.providers[0], same = pv.id === k.provider;
-  $("#ai_key").placeholder = same && k.has_key ? `Saved${k.key_hint ? ", ends in " + k.key_hint : ""}. Paste a new key to replace it` : pv.needs_key ? "Paste your key" : "Not needed";
-  $("#ai_keyhint").innerHTML = pv.key_url ? `${pv.needs_key ? "Get a key at" : "Set it up at"} <a href="${esc(pv.key_url)}" target="_blank" rel="noopener">${esc(pv.key_url.replace("https://", ""))}</a>. The key stays on this server and is never shown again.` : "The key stays on this server and is never shown again.";
+  const count = k.key_count || (k.has_key ? 1 : 0);
+  const countText = count > 1 ? `Saved ${count} keys (${k.key_hint}). Paste new key(s) to replace` : `Saved${k.key_hint ? ", ends in " + k.key_hint : ""}. Paste new key(s) to replace`;
+  $("#ai_key").placeholder = same && k.has_key ? countText : pv.needs_key ? "Paste one or more keys (one per line or comma-separated)" : "Not needed";
+  $("#ai_keyhint").innerHTML = pv.key_url ? `${pv.needs_key ? "Get keys at" : "Set it up at"} <a href="${esc(pv.key_url)}" target="_blank" rel="noopener">${esc(pv.key_url.replace("https://", ""))}</a>. Paste multiple Gemini API keys (one per line or comma-separated) to run requests in parallel with instant zero-gap failover if a key hits rate limits.` : "Keys stay on this server and are never shown again.";
   $("#ai_model").placeholder = pv.example ? "For example " + pv.example : "The model id, exactly as the service names it";
   $("#ai_base").placeholder = pv.address || "http://127.0.0.1:1234/v1";
   $("#ai_basewrap").hidden = pv.id !== "custom" && !(same && k.base_url);
@@ -2004,16 +2006,77 @@ async function drawSettings() {
   try {
     if (tab === "ai") {
       const k = S.ai = await api("/api/ai");
-      body.innerHTML = `<section class="set-sec"><h2>AI</h2><p class="help">PeakCut uses an AI model to pick the moments worth clipping and to write hooks, titles and captions. Use your own key from any of these services. You pay that service directly. Without a key, clips are picked by loudness.</p>
-          <div class="ai-state">${k.ready ? `<span class="pill ok">${ic("check")}Ready</span><span class="sub">${esc(k.label)} · ${esc(k.models[0] || "")}</span>` : `<span class="pill warn">Not set up</span><span class="sub">Choose a service, paste your key and pick a model.</span>`}</div>
+      const keyCount = k.key_count || (k.has_key ? 1 : 0);
+      body.innerHTML = `<section class="set-sec"><h2>AI</h2><p class="help">PeakCut uses an AI model to pick the moments worth clipping and to write hooks, titles and captions. Multiple API keys run in parallel and automatically switch with zero delay if a rate limit is reached. Without a key, clips are picked by loudness.</p>
+          <div class="ai-state">${k.ready ? `<span class="pill ok">${ic("check")}Ready</span><span class="sub">${esc(k.label)} · ${esc(k.models[0] || "")}${keyCount > 1 ? ` · <b style="color:var(--ok)">${keyCount} keys active (parallel & auto-failover)</b>` : ""}</span>` : `<span class="pill warn">Not set up</span><span class="sub">Choose a service, paste your key(s) and pick a model.</span>`}</div>
           <div class="ai-form">
             <label class="f">AI service<select id="ai_provider">${k.providers.map(x => `<option value="${esc(x.id)}" ${x.id === k.provider ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select></label>
-            <label class="f">Key<input id="ai_key" type="password" autocomplete="off" spellcheck="false"><span class="hint" id="ai_keyhint"></span></label>
+            <label class="f">API Key(s)<textarea id="ai_key" rows="3" style="font-family:monospace;font-size:12px;padding:8px;resize:vertical;min-height:56px;" autocomplete="off" spellcheck="false"></textarea><span class="hint" id="ai_keyhint"></span></label>
             <label class="f" id="ai_basewrap">Address<input id="ai_base" value="${esc(k.base_url || "")}" spellcheck="false"><span class="hint">Where the service answers. Only needed for a custom service.</span></label>
             <label class="f">Model<span class="with"><input id="ai_model" list="ai_models" value="${esc(k.models.join(", "))}" spellcheck="false"><button class="btn" type="button" data-act="aimodels">Find models</button></span>
               <datalist id="ai_models"></datalist><span class="hint">A fast, inexpensive model is the right choice. Add a second one after a comma to fall back on.</span></label>
           </div>
-          <div class="row" style="margin-top:20px"><button class="btn primary" data-act="aisave">Save and test</button>${k.ready ? `<button class="btn" data-act="aitest">Test again</button>` : ""}</div></section>`;
+          <div class="row" style="margin-top:20px"><button class="btn primary" data-act="aisave">Save and test</button>${k.ready ? `<button class="btn" data-act="aitest">Test again</button>` : ""}</div></section>
+        <section class="set-sec" style="margin-top:20px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <div>
+              <h3 style="margin:0;font-size:16px;">API Keys Management (${keyCount})</h3>
+              <p class="help" style="margin:2px 0 0;">Check individual key health, usage (calls & tokens), edit, test or delete keys.</p>
+            </div>
+            <div style="display:flex;gap:8px;">
+              ${keyCount > 0 ? `<button class="btn sm" type="button" data-act="aitestall">${ic("bolt")}Test all keys</button>` : ""}
+              <button class="btn sm primary" type="button" data-act="aitoggleadd">${ic("plus")}Add new key</button>
+            </div>
+          </div>
+          <div id="ai_add_box" style="display:none;background:var(--bg-faint,rgba(255,255,255,0.03));border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:14px;">
+            <div style="font-weight:600;font-size:13px;margin-bottom:6px;">Add New API Key(s)</div>
+            <textarea id="ai_new_key_input" rows="2" placeholder="Paste one or more keys (comma or newline separated)..." style="width:100%;font-family:monospace;font-size:12px;padding:8px;margin-bottom:8px;box-sizing:border-box;"></textarea>
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+              <button class="btn sm ghost" type="button" data-act="aitoggleadd">Cancel</button>
+              <button class="btn sm primary" type="button" data-act="aiaddconfirm">Add and save</button>
+            </div>
+          </div>
+          ${(k.key_details || []).length ? `
+            <div class="scroll">
+              <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                <thead>
+                  <tr style="border-bottom:1px solid var(--line);text-align:left;">
+                    <th style="padding:8px 6px;width:32px;">#</th>
+                    <th style="padding:8px 6px;">Key</th>
+                    <th style="padding:8px 6px;">Status</th>
+                    <th class="num" style="padding:8px 6px;">Calls</th>
+                    <th class="num" style="padding:8px 6px;">Tokens</th>
+                    <th class="num" style="padding:8px 6px;">Speed</th>
+                    <th style="padding:8px 6px;text-align:right;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${(k.key_details || []).map((kd, idx) => `
+                    <tr style="border-bottom:1px solid var(--line);" id="key_row_${idx}">
+                      <td class="sub" style="padding:8px 6px;">#${idx + 1}</td>
+                      <td style="padding:8px 6px;"><code style="font-family:monospace;font-size:12px;">${esc(kd.masked)}</code></td>
+                      <td style="padding:8px 6px;">
+                        ${kd.in_cooldown ? `<span class="pill warn">Cooldown (${kd.cooldown_remaining}s)</span>` :
+                          kd.status === "ok" ? `<span class="pill ok">Working</span>` :
+                          kd.status === "error" ? `<span class="pill bad">Error</span>` :
+                          `<span class="pill">Ready</span>`}
+                        ${kd.last_error ? `<div class="sub" style="color:var(--bad);font-size:11px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(kd.last_error)}">${esc(kd.last_error)}</div>` : ""}
+                      </td>
+                      <td class="num" style="padding:8px 6px;">${kd.calls || 0}</td>
+                      <td class="num" style="padding:8px 6px;">${(kd.tokens || 0).toLocaleString()}</td>
+                      <td class="num sub" style="padding:8px 6px;">${kd.last_latency_ms ? kd.last_latency_ms + " ms" : "—"}</td>
+                      <td style="padding:8px 6px;text-align:right;white-space:nowrap;">
+                        <button class="btn sm ghost" type="button" data-act="aitestone" data-idx="${idx}">Test</button>
+                        <button class="btn sm ghost" type="button" data-act="aieditone" data-idx="${idx}">Edit</button>
+                        <button class="btn sm ghost danger" type="button" data-act="aidelone" data-idx="${idx}">Delete</button>
+                      </td>
+                    </tr>
+                  `).join("")}
+                </tbody>
+              </table>
+            </div>
+          ` : `<div class="sub" style="padding:12px 0;">No individual keys configured yet. Paste keys in the box above or click "Add new key".</div>`}
+        </section>`;
       aiHints();
     }
     if (tab === "profile") {
@@ -2229,9 +2292,91 @@ document.addEventListener("click", async e => {
         let ok = null, why = "";
         try { ok = await send("/api/ai/test"); } catch (err) { why = err.message; }
         S.status = await api("/api/status"); drawShell(); await drawSettings();
-        if (ok) toast(`Saved. ${ok.model} answered, so the AI is ready.`, "ok");
+        if (ok) toast(`Saved. ${ok.model} answered, so the AI is ready.${ok.note ? " " + ok.note : ""}`, "ok");
         else toast(`Saved, but the test failed. ${why}`, "bad");
       } finally { b.disabled = false; }
+      return;
+    }
+    if (a === "aitoggleadd") {
+      const box = $("#ai_add_box");
+      if (box) {
+        box.style.display = box.style.display === "none" ? "block" : "none";
+        if (box.style.display !== "none") $("#ai_new_key_input")?.focus();
+      }
+      return;
+    }
+    if (a === "aiaddconfirm") {
+      const val = $("#ai_new_key_input")?.value?.trim();
+      if (!val) return toast("Paste the key(s) to add first.", "warn");
+      b.disabled = true;
+      try {
+        await send("/api/ai/keys/add", {key: val});
+        toast("Key(s) added successfully.", "ok");
+        await drawSettings();
+      } catch (err) {
+        toast(`Failed to add key: ${err.message}`, "bad");
+      } finally { b.disabled = false; }
+      return;
+    }
+    if (a === "aidelone") {
+      const idx = Number(d.idx);
+      if (!confirm(`Delete API Key #${idx + 1}?`)) return;
+      b.disabled = true;
+      try {
+        await send("/api/ai/keys/delete", {index: idx});
+        toast(`Key #${idx + 1} deleted.`, "ok");
+        await drawSettings();
+      } catch (err) {
+        toast(`Failed to delete key: ${err.message}`, "bad");
+      } finally { b.disabled = false; }
+      return;
+    }
+    if (a === "aieditone") {
+      const idx = Number(d.idx);
+      const newKey = prompt(`Enter new replacement key for Key #${idx + 1}:`);
+      if (!newKey || !newKey.trim()) return;
+      b.disabled = true;
+      try {
+        await send("/api/ai/keys/update", {index: idx, key: newKey.trim()});
+        toast(`Key #${idx + 1} updated.`, "ok");
+        await drawSettings();
+      } catch (err) {
+        toast(`Failed to update key: ${err.message}`, "bad");
+      } finally { b.disabled = false; }
+      return;
+    }
+    if (a === "aitestone") {
+      const idx = Number(d.idx);
+      const origText = b.textContent;
+      b.disabled = true;
+      b.textContent = "Testing…";
+      try {
+        const res = await send("/api/ai/keys/test", {index: idx});
+        if (res.ok) {
+          toast(`Key #${idx + 1} is working (${res.latency_ms}ms).`, "ok");
+        } else {
+          toast(`Key #${idx + 1} failed: ${res.error}`, "bad");
+        }
+        await drawSettings();
+      } catch (err) {
+        toast(`Test failed: ${err.message}`, "bad");
+      } finally { b.disabled = false; b.textContent = origText; }
+      return;
+    }
+    if (a === "aitestall") {
+      const origText = b.textContent;
+      b.disabled = true;
+      b.textContent = "Testing all…";
+      try {
+        const r = await send("/api/ai/keys/test", {});
+        const list = r.results || [];
+        const okCount = list.filter(x => x.ok).length;
+        const failCount = list.length - okCount;
+        toast(`Tested ${list.length} keys: ${okCount} working, ${failCount} failed.`, okCount === list.length ? "ok" : "warn");
+        await drawSettings();
+      } catch (err) {
+        toast(`Test all failed: ${err.message}`, "bad");
+      } finally { b.disabled = false; b.textContent = origText; }
       return;
     }
     if (a === "menu") return $("#app").classList.toggle("open");

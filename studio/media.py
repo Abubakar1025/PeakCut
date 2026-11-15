@@ -17,7 +17,7 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # YouTube sometimes refuses a server's downloads altogether ("sign in to confirm you're not a bot"). It is a
 # refusal of the server, not of one video, so once it happens YouTube links are turned away at once for a few
 # minutes, with a clear message, instead of each one waiting to fail. Then the next link simply tries again.
-YT_PAUSE = 600
+YT_PAUSE = 60
 _yt_refused_until = 0.0
 YT_BLOCKED = ("YouTube isn't letting PeakCut download videos right now. Upload the video file instead, or use a "
               "Twitch or Kick link. YouTube links will be tried again in a few minutes.")
@@ -36,6 +36,11 @@ def is_youtube(url: str) -> bool:
 
 def youtube_paused() -> bool:
     return time.time() < _yt_refused_until
+
+
+def unpause_youtube():
+    global _yt_refused_until
+    _yt_refused_until = 0.0
 
 
 def check_youtube(url: str):
@@ -58,6 +63,8 @@ def _youtube_guard(url):
     check_youtube(url)
     try:
         yield
+        if is_youtube(url):
+            unpause_youtube()
     except YouTubeBlocked:
         raise
     except Exception as e:  # noqa: BLE001
@@ -100,7 +107,9 @@ def _ydl(opts):
     # a channel or playlist link is answered as "a list" straight away, never walked video by video
     return yt_dlp.YoutubeDL({"noplaylist": True, "quiet": True, "no_warnings": True, "logger": _Quiet(),
                              "extract_flat": "in_playlist", "playlistend": 1, "socket_timeout": 20,
-                             "concurrent_fragment_downloads": 4, **opts})
+                             "concurrent_fragment_downloads": 4,
+                             "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+                             **opts})
 
 
 def _video_format(height):

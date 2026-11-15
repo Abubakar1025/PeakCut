@@ -128,6 +128,18 @@ def ai_key() -> str:
     return _secret("PEAKCUT_AI_KEY", "PEAKCUT_AI_KEY_FILE", r"\S{8,}")
 
 
+def ai_keys() -> list:
+    raw = env("PEAKCUT_AI_KEY")
+    if raw:
+        return [k.strip() for k in re.split(r"[\r\n,;]+", raw) if k.strip()]
+    path = env("PEAKCUT_AI_KEY_FILE")
+    if path and Path(path).exists():
+        text = Path(path).read_text(encoding="utf-8", errors="ignore")
+        return [k.strip() for k in re.split(r"[\r\n,;]+", text) if k.strip()]
+    k = ai_key()
+    return [k] if k else []
+
+
 def ai_ready() -> bool:
     from . import ai
     return ai.ready()

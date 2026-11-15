@@ -1215,7 +1215,11 @@ def ai_usage():
 # ---------------------------------------------------------------- the AI key and model, set from the dashboard
 # Only the owner (or an admin, when accounts are on) reaches these. The key is never sent back to the page.
 def _ai_error(e) -> str:
-    return safe.friendly(e, 300).replace(ai.key() or "\0", "<key>")
+    text = safe.friendly(e, 300)
+    for k in ai.keys():
+        if k:
+            text = text.replace(k, "<key>")
+    return text
 
 
 @app.get("/api/ai")
@@ -1227,10 +1231,10 @@ def ai_get(request: Request):
 @app.put("/api/ai")
 def ai_put(request: Request, body: dict = Body(...)):
     _admin(request)
-    k = body.get("key")
+    k = body.get("keys") if body.get("keys") is not None else body.get("key")
     try:
         out = ai.save(body.get("provider"), body.get("models"), body.get("base_url") or "",
-                      None if k is None or (isinstance(k, str) and not k.strip() and not body.get("remove_key")) else str(k))
+                      None if k is None or (isinstance(k, str) and not k.strip() and not body.get("remove_key")) else k)
     except (ValueError, TypeError) as e:
         raise HTTPException(400, str(e))
     usage.forget_all()
@@ -1260,6 +1264,67 @@ def ai_test(request: Request):
         raise HTTPException(400, str(e))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, "The AI did not answer: " + _ai_error(e))
+
+
+@app.post("/api/ai/keys/test")
+def ai_keys_test(request: Request, body: dict = Body(default={})):
+    _admin(request)
+    _throttle("aitest:" + ctx.uid(), 30, 600)
+    idx = body.get("index")
+    try:
+        if idx is not None:
+            return ai.test_key(int(idx))
+        return {"results": ai.test_all_keys()}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, "Test failed: " + _ai_error(e))
+
+
+@app.post("/api/ai/keys/add")
+def ai_keys_add(request: Request, body: dict = Body(...)):
+    _admin(request)
+    k = body.get("key")
+    if not k:
+        raise HTTPException(400, "Enter the key to add.")
+    try:
+        out = ai.add_key(k)
+        usage.forget_all()
+        ctx.bump()
+        return out
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/ai/keys/delete")
+def ai_keys_delete(request: Request, body: dict = Body(...)):
+    _admin(request)
+    idx = body.get("index")
+    if idx is None:
+        raise HTTPException(400, "Key index required.")
+    try:
+        out = ai.delete_key(int(idx))
+        usage.forget_all()
+        ctx.bump()
+        return out
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/ai/keys/update")
+def ai_keys_update(request: Request, body: dict = Body(...)):
+    _admin(request)
+    idx = body.get("index")
+    new_k = body.get("key")
+    if idx is None or not new_k:
+        raise HTTPException(400, "Key index and new key required.")
+    try:
+        out = ai.update_key(int(idx), new_k)
+        usage.forget_all()
+        ctx.bump()
+        return out
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 # ================================================================ posting, accounts, settings

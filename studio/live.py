@@ -31,10 +31,12 @@ def media_safe(e) -> str:
     return safe.friendly(e, 300)
 
 
-def normalize(url: str) -> str:
+def normalize(url: str, embed: str = None) -> str:
     url = url.strip()
     if not re.match(r"^https?://", url):
         url = "https://" + url
+    if embed and re.fullmatch(r"[\w-]{11}", embed):
+        return f"https://www.youtube.com/watch?v={embed}"
     m = re.match(r"^(https?://(?:www\.)?youtube\.com/(?:@[^/?#]+|channel/[^/?#]+|c/[^/?#]+))/?(?:[?#].*)?$", url)
     return m.group(1) + "/live" if m else url
 
@@ -49,13 +51,15 @@ class _Quiet:
 def resolve(url: str) -> dict:
     """Ask yt-dlp for the stream's playable address. Raises NotLive if the channel is offline."""
     import yt_dlp
+    url = normalize(url)
     opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "logger": _Quiet(),
-            "format": "b[height<=720]/bv*[height<=720]+ba/b"}
-    if media.is_youtube(url) and media.youtube_paused():
-        raise NotLive(media.YT_BLOCKED)
+            "format": "b[height<=720]/bv*[height<=720]+ba/b",
+            "extractor_args": {"youtube": {"player_client": ["android", "web"]}}}
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
+        if media.is_youtube(url):
+            media.unpause_youtube()
     except Exception as e:  # noqa: BLE001
         if media.note_refusal(url, e):
             raise NotLive(media.YT_BLOCKED) from e
@@ -383,16 +387,33 @@ class Session:
             rs = max((m["score"] for m in match), default=0)
             verdict["reaction"] = rs
             both = bool(match)
-            ok = both or (st["decide_mode"] == "either" and c["score"] >= 90) or (must and added == 0)
+            mode = st.get("decide_mode", "either")
+            min_sc = int(st.get("min_score", 70))
+            has_chat = bool(self.chat_on or self.chat_total)
+
+            if mode == "words":
+                ok = c["score"] >= min_sc
+                why = f"Words judge scored {c['score']}"
+            elif mode == "either":
+                ok = both or c["score"] >= min_sc
+                why = "Both judges agreed" if both else f"Words judge scored {c['score']}"
+            else:  # "both"
+                if not has_chat:
+                    ok = both or c["score"] >= max(min_sc, 75) or (must and added == 0)
+                    why = "Both judges agreed" if both else f"Words judge scored {c['score']} (no stream chat)"
+                else:
+                    ok = both or c["score"] >= 85 or (must and added == 0)
+                    why = "Both judges agreed" if both else f"Words judge scored {c['score']}"
+
             if not ok:
                 self.rejected += 1
                 self._verdict(verdict, "Reaction judge said no, not clipped")
                 continue
-            if any(abs(c["start"] - k["start"]) < st["min_gap_min"] * 60 for k in self.job["clips"]):
+            if any(abs(c["start"] - k["start"]) < st.get("min_gap_min", 1) * 60 for k in self.job["clips"]):
                 self._verdict(verdict, "Too close to the last clip")
                 continue
-            why = "Both judges agreed" if both else ("Words judge was very sure" if c["score"] >= 90 and
-                                                     st["decide_mode"] == "either" else "Forced: no clip for a while")
+            if not why:
+                why = "Both judges agreed" if both else "Forced: no clip for a while"
             c["judges"] = {"words": c["score"], "reaction": rs or None, "why": why}
             c["reason"] = f"{c['reason']} ({why.lower()}.)"
             self._add_clip(c)
@@ -636,7 +657,11 @@ def recover(job):
 
 
 def start_session(creator: dict, url=None) -> dict:
-    url = normalize(url or creator.get("channel") or "")
+    embed = None
+    yprof = (creator.get("profiles") or {}).get("youtube") or {}
+    if yprof.get("live") and yprof.get("embed"):
+        embed = yprof.get("embed")
+    url = normalize(url or creator.get("channel") or "", embed=embed)
     if not re.match(r"^https?://[^/]+\.[^/]+/", url + "/"):
         raise ValueError("Add this creator's channel link first.")
     if active_for(creator["id"]):
@@ -644,9 +669,12 @@ def start_session(creator: dict, url=None) -> dict:
     if not media.site_allowed(url):
         raise ValueError("Channel links must be from YouTube, Twitch or Kick.")
     if media.is_youtube(url) and media.youtube_paused():
-        raise ValueError(media.YT_BLOCKED.replace("download videos", "record YouTube streams")
-                         .replace("Upload the video file instead, or use a Twitch or Kick link. YouTube links",
-                                  "Twitch and Kick streams still work. YouTube"))
+        try:
+            resolve(url)
+        except Exception:
+            raise ValueError(media.YT_BLOCKED.replace("download videos", "record YouTube streams")
+                             .replace("Upload the video file instead, or use a Twitch or Kick link. YouTube links",
+                                      "Twitch and Kick streams still work. YouTube"))
     if len(active_mine()) >= config.MAX_LIVE_PER_USER:
         raise ValueError(f"You're already recording {len(active_mine())} streams, the most this server allows at once. Stop one first.")
     if len(active()) >= config.MAX_LIVE_TOTAL or (active() and load.busy()):
