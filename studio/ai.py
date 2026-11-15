@@ -537,6 +537,35 @@ class AIError(RuntimeError):
     pass
 
 
+problem = {"text": "", "at": 0.0}       # why the AI last failed, for the dashboard; cleared when it answers again
+
+
+def explain(e) -> str:
+    """What went wrong with an AI call, in words the owner can act on."""
+    text, low = str(e), str(e).lower()
+    name = (models() or ["?"])[0]
+    if "404" in text or "not found" in low or "does not exist" in low or "unknown model" in low or "not_found" in low:
+        return f"{label()} doesn't know the model \"{name}\". Open Settings, AI, press Find models and pick one from the list."
+    if "401" in text or "403" in text or "api key" in low or "api_key" in low or "unauthorized" in low or "permission" in low:
+        return f"{label()} refused the key. Paste a working key under Settings, AI."
+    if "429" in text or "quota" in low or "rate limit" in low or "exhausted" in low:
+        return f"{label()} says the key has hit its limit or has no credit left. Check the account with {label()}, or try again later."
+    if "connect" in low or "timed out" in low or "timeout" in low or "getaddrinfo" in low or "refused" in low:
+        return f"PeakCut couldn't reach {label()}. Check the internet connection" + (" and that Ollama is running." if provider() == "ollama" else ".")
+    return ""
+
+
+def note_problem(e):
+    import time
+    why = explain(e)
+    if why:
+        problem.update(text=why, at=time.time())
+
+
+def clear_problem():
+    problem.update(text="", at=0.0)
+
+
 def _fail(r, model, use_key=None):
     text = r.text[:300]
     all_k = set(keys())
@@ -671,6 +700,7 @@ def call(model: str, prompt: str, schema: dict, key: str = None):
             latency = int((time.time() - t0) * 1000)
             tokens = (res[1] + res[2]) if len(res) >= 3 else 0
             _pool.record_success(chosen, tokens=tokens, latency_ms=latency)
+            clear_problem()
             return res
         except Exception as e:
             last_err = e
@@ -685,6 +715,7 @@ def call(model: str, prompt: str, schema: dict, key: str = None):
             _pool.release(chosen)
 
     if last_err:
+        note_problem(last_err)
         raise last_err
     raise AIError("All API keys failed to answer.")
 
